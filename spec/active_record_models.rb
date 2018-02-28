@@ -5,6 +5,15 @@ ActiveRecord::Schema.define(:version => 1) do
     t.column :domain, :string
   end
 
+  create_table :organizations, :force => true do |t|
+    t.column :name, :string
+  end
+
+  create_table :products, :force => true do |t|
+    t.column :name, :string
+    t.column :organization_id, :integer
+  end
+
   create_table :projects, :force => true do |t|
     t.column :name, :string
     t.column :account_id, :integer
@@ -59,6 +68,13 @@ end
 
 class Account < ActiveRecord::Base
   has_many :projects
+end
+
+class Organization < ActiveRecord::Base
+end
+
+class Product < ActiveRecord::Base
+  acts_as_tenant :organization
 end
 
 class Project < ActiveRecord::Base

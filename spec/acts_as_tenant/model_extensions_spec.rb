@@ -149,6 +149,24 @@ describe ActsAsTenant do
     end
   end
 
+  describe 'Multiple tenants' do
+    before do
+      @organization = Organization.create!(:name => 'NetOrg')
+      ActsAsTenant.current_tenant = @organization
+      @product = Product.create!(:name => 'shoes')
+      @account = Account.create!(:name => 'foo')
+      @project = Project.create!(:name => 'foobar')
+    end
+
+    it 'should set tenant to product' do
+      expect(@product.organization).to eq(@organization)
+    end
+
+    it 'should not set tenant to project' do
+      expect(@project.account).to be_nil
+    end
+  end
+
   # Associations
   describe 'Associations should be correctly scoped by current tenant' do
     before do

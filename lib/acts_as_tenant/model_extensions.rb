@@ -1,14 +1,5 @@
 module ActsAsTenant
-  @@tenant_klass = nil
   @@models_with_global_records = []
-
-  def self.set_tenant_klass(klass)
-    @@tenant_klass = klass
-  end
-
-  def self.tenant_klass
-    @@tenant_klass
-  end
 
   def self.models_with_global_records
     @@models_with_global_records
@@ -18,8 +9,8 @@ module ActsAsTenant
     @@models_with_global_records.push(model)
   end
 
-  def self.fkey
-    "#{@@tenant_klass.to_s}_id"
+  def self.fkey(tenant_klass)
+    "#{tenant_klass.to_s}_id"
   end
 
   def self.current_tenant=(tenant)
@@ -28,6 +19,10 @@ module ActsAsTenant
 
   def self.current_tenant
     RequestStore.store[:current_tenant] || self.default_tenant
+  end
+
+  def self.current_tenant_klass
+    RequestStore.store[:current_tenant].class.name.demodulize.downcase.to_sym
   end
 
   def self.unscoped=(unscoped)
@@ -85,20 +80,20 @@ module ActsAsTenant
 
     module ClassMethods
       def acts_as_tenant(tenant = :account, options = {})
-        ActsAsTenant.set_tenant_klass(tenant)
+        self.define_singleton_method('tenant_klass') { tenant }
 
         ActsAsTenant.add_global_record_model(self) if options[:has_global_records]
 
         # Create the association
         valid_options = options.slice(:foreign_key, :class_name, :inverse_of, :optional)
-        fkey = valid_options[:foreign_key] || ActsAsTenant.fkey
+        fkey = valid_options[:foreign_key] || ActsAsTenant.fkey(tenant_klass)
         belongs_to tenant, valid_options
 
         default_scope lambda {
           if ActsAsTenant.configuration.require_tenant && ActsAsTenant.current_tenant.nil? && !ActsAsTenant.unscoped?
             raise ActsAsTenant::Errors::NoTenantSet
           end
-          if ActsAsTenant.current_tenant
+          if ActsAsTenant.current_tenant && tenant_klass == ActsAsTenant.current_tenant_klass
             keys = [ActsAsTenant.current_tenant.id]
             keys.push(nil) if options[:has_global_records]
             where(fkey.to_sym => keys)
@@ -112,7 +107,7 @@ module ActsAsTenant
         # - validate that associations belong to the tenant, currently only for belongs_to
         #
         before_validation Proc.new {|m|
-          if ActsAsTenant.current_tenant
+          if ActsAsTenant.current_tenant && self.class.tenant_klass == ActsAsTenant.current_tenant_klass
             m.send "#{fkey}=".to_sym, ActsAsTenant.current_tenant.id
           end
         }, :on => :create
@@ -146,14 +141,14 @@ module ActsAsTenant
             integer
           end
 
-          define_method "#{ActsAsTenant.tenant_klass.to_s}=" do |model|
+          define_method "#{tenant}=" do |model|
             super(model)
             raise ActsAsTenant::Errors::TenantIsImmutable if send("#{fkey}_changed?") && persisted? && !send("#{fkey}_was").nil?
             model
           end
 
-          define_method "#{ActsAsTenant.tenant_klass.to_s}" do
-            if !ActsAsTenant.current_tenant.nil? && send(fkey) == ActsAsTenant.current_tenant.id
+          define_method "#{tenant}" do
+            if !ActsAsTenant.current_tenant.nil? && send(fkey) == ActsAsTenant.current_tenant.id && self.class.tenant_klass == ActsAsTenant.current_tenant_klass
               return ActsAsTenant.current_tenant
             else
               super()
@@ -171,7 +166,7 @@ module ActsAsTenant
 
       def validates_uniqueness_to_tenant(fields, args ={})
         raise ActsAsTenant::Errors::ModelNotScopedByTenant unless respond_to?(:scoped_by_tenant?)
-        fkey = reflect_on_association(ActsAsTenant.tenant_klass).foreign_key
+        fkey = reflect_on_association(tenant_klass).foreign_key
         #tenant_id = lambda { "#{ActsAsTenant.fkey}"}.call
         if args[:scope]
           args[:scope] = Array(args[:scope]) << fkey
@@ -187,13 +182,13 @@ module ActsAsTenant
               if instance.new_record?
                 unless self.class.where(fkey.to_sym => [nil, instance[fkey]],
                                         field.to_sym => instance[field]).empty?
-                  errors.add(field, 'has already been taken') 
+                  errors.add(field, 'has already been taken')
                 end
               else
                 unless self.class.where(fkey.to_sym => [nil, instance[fkey]],
                                         field.to_sym => instance[field])
                                  .where.not(:id => instance.id).empty?
-                  errors.add(field, 'has already been taken') 
+                  errors.add(field, 'has already been taken')
                 end
 
               end
